@@ -25,7 +25,7 @@ requirements_train = set(
         "urdfpy",  # Robot FK
         "torch>=1.5",  # Training/Benchmarking
         "torch-scatter",  # For collision models
-        f"pointnet2 @ file://localhost{root_dir}/extern/pointnet2",  # Network modules
+        f"pointnet2",#, @ file://localhost{root_dir}/extern/pointnet2",  # Network modules
         "autolab_core",  # used for loading cfg files and Image classes
     ]
 )

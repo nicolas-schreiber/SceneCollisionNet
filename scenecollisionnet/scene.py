@@ -288,7 +288,7 @@ class SceneRenderer:
         norms = point_norm_cloud.normals.data.T.reshape(
             depth.height, depth.width, 3
         )
-        cp = self.get_camera_pose()
+        cp = self.camera_pose
         cp[:, 1:3] *= -1
 
         pt_mask = np.logical_and(

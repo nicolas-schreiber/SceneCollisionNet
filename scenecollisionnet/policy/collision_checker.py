@@ -663,7 +663,7 @@ class NNCollisionChecker(CollisionChecker):
         )
         # Bounds and vox_size parameters can be loaded earlier
         self.model.load_state_dict(chk["model_state_dict"], strict=False)
-        self.model = self.model.to(self.device)
+        self.model = self.model.float().to(self.device)
         self.model.eval()
 
     @abc.abstractmethod
@@ -700,6 +700,7 @@ class NNSceneCollisionChecker(NNCollisionChecker, SceneCollisionChecker):
         )
         self._setup()
 
+        print("@@@@@", self.robot.mesh_links[1:], self.robot.mesh_links)
         # Get features for robot links
         mesh_links = self.robot.mesh_links[1:]
         n_pts = self.cfg["dataset"]["n_obj_points"]
@@ -825,6 +826,164 @@ class NNSceneCollisionChecker(NNCollisionChecker, SceneCollisionChecker):
             trans[i] = poses_tf[:, :3, 3]
             rots[i] = poses_tf[:, :3, :2].reshape(len(qs), -1)
 
+        print("####", trans.shape, rots.shape, poses_tf.shape)
+        # filter translations that are out of bounds
+        in_bounds = (trans > self.model.bounds[0] + 1e-5).all(dim=-1)
+        in_bounds &= (trans < self.model.bounds[1] - 1e-5).all(dim=-1)
+        if in_bounds.any():
+            trans[~in_bounds] = 0.0  # Make inputs safe
+            with torch.no_grad():
+                out = self.model.classify_multi_obj_tfs(
+                    self.link_features,
+                    self.scene_features,
+                    trans,
+                    rots,
+                )
+                res = torch.sigmoid(out).squeeze(-1)
+                res = res > threshold if thresholded else res
+                colls = res * in_bounds
+
+        if thresholded:
+            return colls if by_link else colls.any(dim=0)
+        else:
+            return colls if by_link else colls.max(dim=0)[0]
+
+class NNStormSceneCollisionChecker(NNCollisionChecker, SceneCollisionChecker):
+    def __init__(self, model_path, robot, **kwargs):
+        super().__init__(model_path=model_path, robot=robot, **kwargs)
+        self.model = SceneCollisionNet(
+            bounds=self.cfg["model"]["bounds"],
+            vox_size=self.cfg["model"]["vox_size"],
+        )
+        self._setup()
+
+        print("@@@@@", self.robot.mesh_links[1:], self.robot.mesh_links)
+        # Get features for robot links
+        mesh_links = self.robot.mesh_links[1:]
+        n_pts = self.cfg["dataset"]["n_obj_points"]
+        self.link_pts = np.zeros((len(mesh_links), n_pts, 3), dtype=np.float32)
+        for i, link in enumerate(mesh_links):
+            pts = link.collision_mesh.sample(n_pts)
+            l_pts = pts[None, ...]
+            self.link_pts[i] = l_pts
+        with torch.no_grad():
+            self.link_features = self.model.get_obj_features(
+                torch.from_numpy(self.link_pts).to(self.device)
+            )
+
+    def set_scene(self, obs):
+        super().set_scene(obs)
+
+        if self.robot_to_model is None:
+            self._compute_model_tfs(obs)
+
+        if self.cur_scene_pc is not None:
+            self.cur_scene_pc = self._aggregate_pc(
+                self.cur_scene_pc, self.scene_pc
+            )
+        else:
+            self.cur_scene_pc = self._aggregate_pc(None, self.scene_pc)
+        model_scene_pc = (
+            self.robot_to_model
+            @ torch.cat(
+                (
+                    self.cur_scene_pc,
+                    torch.ones(
+                        (len(self.cur_scene_pc), 1), device=self.device
+                    ),
+                ),
+                dim=1,
+            ).T
+        )
+        model_scene_pc = model_scene_pc[:3].T
+
+        if self.model.bounds[0].device != self.device:
+            self.model.bounds = [b.to(self.device) for b in self.model.bounds]
+            self.model.vox_size = self.model.vox_size.to(self.device)
+            self.model.num_voxels = self.model.num_voxels.to(self.device)
+
+        # Clip points to model bounds and feed in for features
+        in_bounds = (
+            model_scene_pc[..., :3] > self.model.bounds[0] + 1e-5
+        ).all(dim=-1)
+        in_bounds &= (
+            model_scene_pc[..., :3] < self.model.bounds[1] - 1e-5
+        ).all(dim=-1)
+        self.scene_features = self.model.get_scene_features(
+            model_scene_pc[in_bounds].unsqueeze(0)
+        ).squeeze(0)
+
+    def set_object(self, obs):
+        super().set_object(obs)
+        if self.robot_to_model is None:
+            self._compute_model_tfs(obs)
+
+        obj_pc = tra.transform_points(
+            self.obj_pc,
+            self.robot_to_model.cpu().numpy(),
+        )
+
+        obj_tensor = torch.from_numpy(obj_pc.astype(np.float32)).to(
+            self.device
+        )
+        obj_tensor -= obj_tensor.mean(dim=0)
+        self.obj_features = self.model.get_obj_features(
+            obj_tensor.unsqueeze(0)
+        ).squeeze(0)
+
+    def sample_in_bounds(self, num=20000, offset=0.0):
+        return (
+            torch.rand((num, 3), dtype=torch.float32, device=self.device)
+            * (-torch.sub(*self.model.bounds) - 2 * offset)
+            + self.model.bounds[0]
+            + offset
+        )
+
+    def check_object_collisions(self, translations, threshold=0.45):
+        res = torch.zeros(len(translations), dtype=bool, device=self.device)
+        in_bounds = (translations > self.model.bounds[0] + 1e-5).all(dim=-1)
+        in_bounds &= (translations < self.model.bounds[1] - 1e-5).all(dim=-1)
+        if in_bounds.any():
+            tr_in = translations[in_bounds]
+            rots = np.repeat(
+                np.eye(4)[:3, :2].flatten()[None, :], len(tr_in), axis=0
+            )
+            with torch.no_grad():
+                out = self.model.classify_tfs(
+                    self.obj_features[None, :],
+                    self.scene_features[None, ...],
+                    tr_in,
+                    torch.from_numpy(rots).float().to(self.device),
+                )
+                res[in_bounds] = torch.sigmoid(out).squeeze() > threshold
+        return res
+
+    # Objs is an (n, m) array of points, tfs is an (n, t, 4, 4) array of
+    # object transforms
+    def __call__(self, link_pos, link_rot, by_link=False, thresholded=True, threshold=0.4):
+        batch_size = link_pos.shape[0]
+        colls = torch.zeros(
+            (len(self.link_features), batch_size),
+            dtype=torch.bool if thresholded else torch.float32,
+            device=self.device,
+        )
+        trans = torch.empty(
+            (len(self.link_features), batch_size, 3),
+            dtype=torch.float32,
+            device=self.device,
+        )
+        rots = torch.empty(
+            (len(self.link_features), batch_size, 6),
+            dtype=torch.float32,
+            device=self.device,
+        )
+
+        for i, link in enumerate(self.robot.mesh_links[1:]):
+            poses_tf = self.robot_to_model @ self.robot.link_poses[link]
+            trans[i] = poses_tf[:, :3, 3]
+            rots[i] = poses_tf[:, :3, :2].reshape(len(qs), -1)
+
+        print("####", trans.shape, rots.shape, poses_tf.shape)
         # filter translations that are out of bounds
         in_bounds = (trans > self.model.bounds[0] + 1e-5).all(dim=-1)
         in_bounds &= (trans < self.model.bounds[1] - 1e-5).all(dim=-1)

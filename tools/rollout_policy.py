@@ -55,12 +55,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--robot-asset-root",
         type=str,
-        default="extern/isaacgym/assets/",
+        default="data/",
     )
     parser.add_argument(
         "--robot-asset-file",
         type=str,
-        default="urdf/franka_description/robots/franka_panda.urdf",
+        default="panda/panda.urdf",
     )
     parser.add_argument("--ee-link-name", type=str, default="panda_hand")
     parser.add_argument("--headless", action="store_true", default=False)
