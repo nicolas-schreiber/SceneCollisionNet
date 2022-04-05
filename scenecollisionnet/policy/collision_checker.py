@@ -870,6 +870,7 @@ class NNStormSceneCollisionChecker(NNCollisionChecker, SceneCollisionChecker):
             self.link_features = self.model.get_obj_features(
                 torch.from_numpy(self.link_pts).to(self.device)
             )
+        self.scene_features = None
 
     def set_scene(self, obs):
         super().set_scene(obs)
@@ -977,13 +978,10 @@ class NNStormSceneCollisionChecker(NNCollisionChecker, SceneCollisionChecker):
             dtype=torch.float32,
             device=self.device,
         )
+        
+        trans = link_pos
+        rots = link_rot[:, :, :3, :2].reshape(link_pos.shape[0], -1)
 
-        for i, link in enumerate(self.robot.mesh_links[1:]):
-            poses_tf = self.robot_to_model @ self.robot.link_poses[link]
-            trans[i] = poses_tf[:, :3, 3]
-            rots[i] = poses_tf[:, :3, :2].reshape(len(qs), -1)
-
-        print("####", trans.shape, rots.shape, poses_tf.shape)
         # filter translations that are out of bounds
         in_bounds = (trans > self.model.bounds[0] + 1e-5).all(dim=-1)
         in_bounds &= (trans < self.model.bounds[1] - 1e-5).all(dim=-1)
