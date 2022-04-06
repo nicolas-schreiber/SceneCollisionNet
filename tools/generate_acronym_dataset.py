@@ -63,7 +63,7 @@ if __name__ == "__main__":
             (in_path, out_path, float(ms), os.path.join(grasps_dir, f))
         )
 
-    executor = ProcessKillingExecutor(max_workers=8)
+    executor = ProcessKillingExecutor(max_workers=14)
     generator = executor.map(
         process_mesh,
         inputs,

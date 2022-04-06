@@ -1,6 +1,6 @@
 model:
   name: self_coll_nn
-  path: /models          # For docker container
+  path: /home/nicolasschreiber/Projects/SceneCollisionNet/models          # For docker container
 
 trainer:
   device: cuda:0

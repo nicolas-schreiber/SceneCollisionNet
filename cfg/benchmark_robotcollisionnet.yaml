@@ -1,11 +1,11 @@
-output: /benchmark
+output: /home/nicolasschreiber/Projects/SceneCollisionNet/benchmark
 device: cuda:0
 # num_workers: 4        # Defaults to os.cpu_count() if not specified.
 iterations: 250
 
 model:
   name: self_coll_nn
-  path: /models
+  path: /home/nicolasschreiber/Projects/SceneCollisionNet/models
 
 dataset:
   batch_size: 512
