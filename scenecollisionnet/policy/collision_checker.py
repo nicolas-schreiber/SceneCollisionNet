@@ -2,13 +2,15 @@ import abc
 import itertools
 import os
 import os.path as osp
-
+import open3d as o3d
 import numpy as np
 import torch
 import torch_scatter
 import trimesh
 import trimesh.transformations as tra
 from knn_cuda import KNN
+
+import matplotlib.pyplot as plt
 
 try:
     import kaolin as kal
@@ -663,7 +665,7 @@ class NNCollisionChecker(CollisionChecker):
         )
         # Bounds and vox_size parameters can be loaded earlier
         self.model.load_state_dict(chk["model_state_dict"], strict=False)
-        self.model = self.model.float().to(self.device)
+        self.model = self.model.to(self.device)
         self.model.eval()
 
     @abc.abstractmethod
@@ -685,7 +687,7 @@ class NNSelfCollisionChecker(NNCollisionChecker):
         if len(qs) == 0:
             return torch.cuda.BoolTensor([], device=self.device)
         if isinstance(qs, np.ndarray):
-            qs = torch.from_numpy(qs).float().to(self.device)
+            qs = torch.from_numpy(qs).to(self.device)
         with torch.no_grad():
             out = self.model(qs[:, :8])
         return out.squeeze(-1) > self.threshold
@@ -700,7 +702,6 @@ class NNSceneCollisionChecker(NNCollisionChecker, SceneCollisionChecker):
         )
         self._setup()
 
-        print("@@@@@", self.robot.mesh_links[1:], self.robot.mesh_links)
         # Get features for robot links
         mesh_links = self.robot.mesh_links[1:]
         n_pts = self.cfg["dataset"]["n_obj_points"]
@@ -826,7 +827,6 @@ class NNSceneCollisionChecker(NNCollisionChecker, SceneCollisionChecker):
             trans[i] = poses_tf[:, :3, 3]
             rots[i] = poses_tf[:, :3, :2].reshape(len(qs), -1)
 
-        print("####", trans.shape, rots.shape, poses_tf.shape)
         # filter translations that are out of bounds
         in_bounds = (trans > self.model.bounds[0] + 1e-5).all(dim=-1)
         in_bounds &= (trans < self.model.bounds[1] - 1e-5).all(dim=-1)
@@ -857,7 +857,6 @@ class NNStormSceneCollisionChecker(NNCollisionChecker, SceneCollisionChecker):
         )
         self._setup()
 
-        print("@@@@@", self.robot.mesh_links[1:], self.robot.mesh_links)
         # Get features for robot links
         mesh_links = self.robot.mesh_links[1:]
         n_pts = self.cfg["dataset"]["n_obj_points"]
@@ -871,6 +870,7 @@ class NNStormSceneCollisionChecker(NNCollisionChecker, SceneCollisionChecker):
                 torch.from_numpy(self.link_pts).to(self.device)
             )
         self.scene_features = None
+        self.model_scene_pc = None
 
     def set_scene(self, obs):
         super().set_scene(obs)
@@ -910,8 +910,9 @@ class NNStormSceneCollisionChecker(NNCollisionChecker, SceneCollisionChecker):
         in_bounds &= (
             model_scene_pc[..., :3] < self.model.bounds[1] - 1e-5
         ).all(dim=-1)
+        self.model_scene_pc = model_scene_pc[in_bounds]
         self.scene_features = self.model.get_scene_features(
-            model_scene_pc[in_bounds].unsqueeze(0)
+            self.model_scene_pc.unsqueeze(0)
         ).squeeze(0)
 
     def set_object(self, obs):
@@ -978,25 +979,102 @@ class NNStormSceneCollisionChecker(NNCollisionChecker, SceneCollisionChecker):
             dtype=torch.float32,
             device=self.device,
         )
-        
-        trans = link_pos
-        rots = link_rot[:, :, :3, :2].reshape(link_pos.shape[0], -1)
+
+        a = np.eye(3)
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(self.model_scene_pc.cpu().numpy())
+        pcd.paint_uniform_color([1, 0.706, 0])
+        # o3d.visualization.draw_geometries([pcd])
+
+        robo_pcd = o3d.geometry.PointCloud()
+        robo_pcd.points = o3d.utility.Vector3dVector(link_pos[:100,:100].view(-1, 3).cpu().numpy())
+        robo_pcd.paint_uniform_color([0, 0.651, 0.929])
+
+        # (9, 1024, 3)
+        T = np.eye(4)
+        T[:3, :3] = link_rot[0, 0, :, :].cpu().numpy()
+        T[:3, 3] = link_pos[0, 0, :].cpu().numpy()
+
+        link_pcd1 = o3d.geometry.PointCloud()
+        link_pcd1.points = o3d.utility.Vector3dVector(self.link_pts[1,:,:])
+        link_pcd1.transform(T)
+        link_pcd1.paint_uniform_color([0, 0.651, 0.929])
+
+        T[:3, :3] = link_rot[0, 1, :, :].cpu().numpy()
+        T[:3, 3] = link_pos[0, 1, :].cpu().numpy()
+
+        link_pcd2 = o3d.geometry.PointCloud()
+        link_pcd2.points = o3d.utility.Vector3dVector(self.link_pts[2,:,:])
+        link_pcd2.transform(T)
+        link_pcd2.paint_uniform_color([0.929, 0.651, 0])
+
+        T[:3, :3] = link_rot[0, 2, :, :].cpu().numpy()
+        T[:3, 3] = link_pos[0, 2, :].cpu().numpy()
+
+        link_pcd3 = o3d.geometry.PointCloud()
+        link_pcd3.points = o3d.utility.Vector3dVector(self.link_pts[3,:,:])
+        link_pcd3.transform(T)
+        link_pcd3.paint_uniform_color([0.651, 0, 0.929])
+
+        T[:3, :3] = link_rot[0, 3, :, :].cpu().numpy()
+        T[:3, 3] = link_pos[0, 3, :].cpu().numpy()
+
+        link_pcd4 = o3d.geometry.PointCloud()
+        link_pcd4.points = o3d.utility.Vector3dVector(self.link_pts[4,:,:])
+        link_pcd4.transform(T)
+        link_pcd4.paint_uniform_color([0, 0.929, 0.651])
+
+        T[:3, :3] = link_rot[0, 4, :, :].cpu().numpy()
+        T[:3, 3] = link_pos[0, 4, :].cpu().numpy()
+
+        link_pcd5 = o3d.geometry.PointCloud()
+        link_pcd5.points = o3d.utility.Vector3dVector(self.link_pts[5,:,:])
+        link_pcd5.transform(T)
+        link_pcd5.paint_uniform_color([0, 1.651, 0.929])
+
+        T[:3, :3] = link_rot[0, 5, :, :].cpu().numpy()
+        T[:3, 3] = link_pos[0, 5, :].cpu().numpy()
+
+        link_pcd6 = o3d.geometry.PointCloud()
+        link_pcd6.points = o3d.utility.Vector3dVector(self.link_pts[7,:,:])
+        link_pcd6.transform(T)
+        link_pcd6.paint_uniform_color([0, 0.651, 1.929])
+
+
+        o3d.visualization.draw_geometries([pcd, robo_pcd, link_pcd1, link_pcd2, link_pcd3, link_pcd4, link_pcd5, link_pcd6])
+
+        # trans = torch.clone(link_pos.permute(1, 0, 2))
+        # rots = torch.clone(link_rot[:, :, :3, :2].reshape(batch_size, 6, -1).permute(1, 0, 2))
+        trans = link_pos.permute(1, 0, 2)
+        rots = link_rot[:, :, :3, :2].reshape(batch_size, 6, -1).permute(1, 0, 2)
 
         # filter translations that are out of bounds
         in_bounds = (trans > self.model.bounds[0] + 1e-5).all(dim=-1)
         in_bounds &= (trans < self.model.bounds[1] - 1e-5).all(dim=-1)
+
         if in_bounds.any():
             trans[~in_bounds] = 0.0  # Make inputs safe
             with torch.no_grad():
                 out = self.model.classify_multi_obj_tfs(
-                    self.link_features,
+                    self.link_features[[1, 2, 3, 4, 5, 7]],
                     self.scene_features,
                     trans,
                     rots,
                 )
                 res = torch.sigmoid(out).squeeze(-1)
+                print('0', torch.min(link_pos[:, 0, 0]), torch.min(link_pos[:, 0, 1]), torch.min(link_pos[:, 0, 2]))
+                print('0', torch.max(link_pos[:, 0, 0]), torch.max(link_pos[:, 0, 1]), torch.max(link_pos[:, 0, 2]))
+                print("MEAN", torch.mean(res[0, :]), torch.min(res[0, :]))
+                print("MEAN", torch.mean(res[1, :]), torch.min(res[1, :]))
+                print("MEAN", torch.mean(res[2, :]), torch.min(res[2, :]))
+                print("MEAN", torch.mean(res[3, :]), torch.min(res[3, :]))
+                print("MEAN", torch.mean(res[4, :]), torch.min(res[4, :]))
+                print("MEAN", torch.mean(res[5, :]), torch.min(res[5, :]))
                 res = res > threshold if thresholded else res
+                
                 colls = res * in_bounds
+        
+
 
         if thresholded:
             return colls if by_link else colls.any(dim=0)
