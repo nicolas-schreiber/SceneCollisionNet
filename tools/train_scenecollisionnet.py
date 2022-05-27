@@ -44,6 +44,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--dataset_path", type=str)
     parser.add_argument("--device", type=int, default=0, help="GPU index")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing model")
     args = parser.parse_args()
 
     # Replace config with args
@@ -69,10 +70,11 @@ if __name__ == "__main__":
     if args.loss_pct is not None:
         config["trainer"]["loss_pct"] = args.loss_pct
     resume = args.resume
+    overwrite = args.overwrite
 
     # Create output directory for model
     out = osp.join(config["model"]["path"], config["model"]["name"])
-    if osp.exists(out) and not resume:
+    if osp.exists(out) and not resume and not overwrite:
         response = keyboard_input(
             "A model exists at {}. Would you like to overwrite?".format(out),
             yesno=True,
@@ -81,7 +83,7 @@ if __name__ == "__main__":
             sys.exit(0)
     elif osp.exists(out) and resume:
         resume = resume and osp.exists(osp.join(out, "checkpoint.pth.tar"))
-    else:
+    elif not overwrite:
         resume = False
         os.makedirs(out)
     config.save(osp.join(out, "train.yaml"))
