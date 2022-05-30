@@ -107,8 +107,9 @@ if __name__ == "__main__":
         vox_size=config["model"]["vox_size"],
     )
     if resume:
-        checkpoint = torch.load(osp.join(out, "checkpoint.pth.tar"))
+        checkpoint = torch.load(osp.join(out, "checkpoint.pth.tar"), map_location="cuda:0")
         model.load_state_dict(checkpoint["model_state_dict"])
+        model.to(torch.device("cuda:0"))
         start_epoch = checkpoint["epoch"]
         start_iteration = checkpoint["iteration"]
 

@@ -136,6 +136,7 @@ class Trainer(object):
             self.train_iterations,
             desc="Train epoch={:d}".format(self.epoch),
             leave=False,
+            disable=None,
         )
 
         for batch_idx in train_bar:

@@ -1,25 +1,25 @@
 model:
-  name: scene_coll_net
+  name: scene_coll_net_custom_2
   type: SceneCollisionNet  # Options: SceneCollisionNet or PointNetGrid
-  path: /home/nicolasschreiber/Projects/SceneCollisionNet/models
+  path: /home/kit/anthropomatik/lh4704/Projects/SceneCollisionNet/models
   bounds:
-    - [-0.5, -0.8, -0.06]
-    - [0.5, 0.8, 0.3]
-  vox_size: [0.125, 0.1, 0.09]
+    - [-0.3, -0.9, -0.02]
+    - [0.7, 0.9, 0.48]
+  vox_size: [0.125, 0.1125, 0.125]
 
 trainer:
   device: cuda:0
-  num_workers: 14          # defaults to os.cpu_count() if not specified
-  train_iterations: 35
-  val_iterations: 10
+  num_workers: 20           # defaults to os.cpu_count() if not specified
+  train_iterations: 1000
+  val_iterations: 250
   epochs: 1000
   lr: 0.001
   momentum: 0.9
   loss_pct: 0.1
 
 dataset:
-  meshes: /media/nicolasschreiber/data/SceneCollisionNetData/datasets/shapenet/
-  batch_size: 30
+  meshes: /home/kit/anthropomatik/lh4704/Data/shapenet/
+  batch_size: 1
   query_size: 2048
   n_obj_points: 1024
   n_scene_points: 32768
